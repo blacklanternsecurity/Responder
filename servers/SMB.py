@@ -425,8 +425,8 @@ class ResponderSMBServer(SimpleSMBServer):
 		self.setAuthCallback(auth_callback)
 		
 		# Add default shares
-		self.addShare('IPC$', '/tmp', comment='')
-		self.addShare('C$', '/tmp', comment='')
+		self.addShare('IPC$', '/tmp')
+		self.addShare('C$', '/tmp')
 
 def serve_smb2_server(host, port):
 	"""Function to serve SMBv2 server using impacket"""
