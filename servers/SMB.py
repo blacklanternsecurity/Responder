@@ -411,6 +411,19 @@ class SMB2(SMB1):  # SMB2 Server class extending SMB1 with enhanced SMBv2 suppor
 
 				if settings.Config.Verbose:
 					print(color("[+] SMB2: Received %d bytes from %s" % (len(data), self.client_ip), 3))
+					# Add packet analysis for debugging
+					if len(data) >= 4:
+						smb_version = data[4:5]
+						if smb_version == b'\xfe':
+							print(color("[+] SMB2: SMBv2 packet detected (version 0xfe)", 3))
+						elif smb_version == b'\xff':
+							print(color("[+] SMB2: SMBv1 packet detected (version 0xff)", 3))
+						else:
+							print(color("[+] SMB2: Unknown SMB version: 0x%02x" % ord(smb_version), 3))
+					
+					if len(data) >= 10:
+						command = data[8:10]
+						print(color("[+] SMB2: Command: 0x%02x%02x" % (command[0], command[1]), 3))
 
 				if data[0:1] == b"\x81":  #session request 139
 					if settings.Config.Verbose:
@@ -437,32 +450,36 @@ class SMB2(SMB1):  # SMB2 Server class extending SMB1 with enhanced SMBv2 suppor
 					try:
 						self.request.send(NetworkSendBufferPython2or3(buffer1))
 						data = self.request.recv(1024)
+						if settings.Config.Verbose:
+							print(color("[+] SMB2: Sent negotiate response, waiting for session setup", 3))
 					except Exception as e:
 						if settings.Config.Verbose:
 							print(color("[!] SMB2: Error in SMBv2 negotiate: %s" % str(e), 1))
 						break
 
 				# Enhanced SMBv2 Negotiate Protocol Response with SMB 3.x support
-				if data[16:18] == b"\x00\x00" and data[4:5] == b"\xfe":
+				elif data[16:18] == b"\x00\x00" and data[4:5] == b"\xfe":
 					if settings.Config.Verbose:
 						print(color("[+] SMB2: Handling SMBv2 negotiate response", 2))
 					self.connection_state = "SMBV2_NEGOTIATE_RESPONSE"
 					head = SMB2Header(MessageId=GrabMessageID(data).decode('latin-1'), PID="\xff\xfe\x00\x00", CreditCharge=GrabCreditCharged(data).decode('latin-1'), Credits=GrabCreditRequested(data).decode('latin-1'))
-					# Support for SMB 3.x dialects
-					t = SMB2NegoAns(Dialect="\x11\x03")  # SMB 3.1.1
+					# Use the same dialect as original SMB1 class
+					t = SMB2NegoAns(Dialect="\x10\x02")  # SMB 2.0.2
 					t.calculate()
 					packet1 = str(head)+str(t)
 					buffer1 = StructPython2or3('>i', str(packet1))+str(packet1)
 					try:
 						self.request.send(NetworkSendBufferPython2or3(buffer1))
 						data = self.request.recv(1024)
+						if settings.Config.Verbose:
+							print(color("[+] SMB2: Sent negotiate response, waiting for session setup", 3))
 					except Exception as e:
 						if settings.Config.Verbose:
 							print(color("[!] SMB2: Error in SMBv2 negotiate response: %s" % str(e), 1))
 						break
 
 				# Enhanced SMBv2 Session Setup
-				if data[16:18] == b"\x01\x00" and data[4:5] == b"\xfe":
+				elif data[16:18] == b"\x01\x00" and data[4:5] == b"\xfe":
 					if settings.Config.Verbose:
 						print(color("[+] SMB2: Handling SMBv2 session setup", 2))
 					self.connection_state = "SMBV2_SESSION_SETUP"
@@ -474,13 +491,15 @@ class SMB2(SMB1):  # SMB2 Server class extending SMB1 with enhanced SMBv2 suppor
 					try:
 						self.request.send(NetworkSendBufferPython2or3(buffer1))
 						data = self.request.recv(1024)
+						if settings.Config.Verbose:
+							print(color("[+] SMB2: Sent session setup challenge, waiting for auth", 3))
 					except Exception as e:
 						if settings.Config.Verbose:
 							print(color("[!] SMB2: Error in SMBv2 session setup: %s" % str(e), 1))
 						break
 
 				# Enhanced SMBv2 Session Setup Response
-				if data[16:18] == b'\x01\x00' and GrabMessageID(data)[0:1] == b'\x02' or GrabMessageID(data)[0:1] == b'\x03' and data[4:5] == b'\xfe':
+				elif data[16:18] == b'\x01\x00' and GrabMessageID(data)[0:1] == b'\x02' or GrabMessageID(data)[0:1] == b'\x03' and data[4:5] == b'\xfe':
 					if settings.Config.Verbose:
 						print(color("[+] SMB2: Handling SMBv2 session setup response", 2))
 					self.connection_state = "SMBV2_SESSION_SETUP_RESPONSE"
@@ -496,15 +515,18 @@ class SMB2(SMB1):  # SMB2 Server class extending SMB1 with enhanced SMBv2 suppor
 					try:
 						self.request.send(NetworkSendBufferPython2or3(buffer1))
 						data = self.request.recv(1024)
+						if settings.Config.Verbose:
+							print(color("[+] SMB2: Sent session setup response", 3))
 					except Exception as e:
 						if settings.Config.Verbose:
 							print(color("[!] SMB2: Error in SMBv2 session setup response: %s" % str(e), 1))
 						break
 
 				# Fall back to SMBv1 handling for compatibility
-				if settings.Config.Verbose:
-					print(color("[+] SMB2: Falling back to SMBv1 handling", 3))
-				self.handle_smbv1(data, Challenge)
+				else:
+					if settings.Config.Verbose:
+						print(color("[+] SMB2: Falling back to SMBv1 handling", 3))
+					self.handle_smbv1(data, Challenge)
 
 		except Exception as e:
 			if settings.Config.Verbose:
