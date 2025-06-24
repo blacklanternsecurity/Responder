@@ -533,30 +533,27 @@ class SMB2(SMB1):  # SMB2 Server class extending SMB1 with enhanced SMBv2 suppor
 						else:
 							print(color("[+] SMB2: Debug - No SMB 2.x string found", 3))
 					
-					# Only handle SMBv1 if it doesn't contain SMB 2.x
-					if re.search(rb'SMB 2\.', data) == None:
-						if settings.Config.Verbose:
-							print(color("[+] SMB2: Falling back to SMBv1 negotiate", 3))
-						self.connection_state = "SMBV1_NEGOTIATE"
-						Header = SMBHeader(cmd="\x72",flag1="\x88", flag2="\x01\xc8", pid=pidcalc(NetworkRecvBufferPython2or3(data)),mid=midcalc(NetworkRecvBufferPython2or3(data)))
-						Body = SMBNegoKerbAns(Dialect=Parse_Nego_Dialect(NetworkRecvBufferPython2or3(data)))
-						Body.calculate()
-				
-						packet1 = str(Header)+str(Body)
-						Buffer = StructPython2or3('>i', str(packet1))+str(packet1)
+					# Handle as SMBv1 since the packet version is 0xff (SMBv1)
+					# Even if it contains SMBv2 dialects, it's still an SMBv1 packet
+					if settings.Config.Verbose:
+						print(color("[+] SMB2: Falling back to SMBv1 negotiate", 3))
+					self.connection_state = "SMBV1_NEGOTIATE"
+					Header = SMBHeader(cmd="\x72",flag1="\x88", flag2="\x01\xc8", pid=pidcalc(NetworkRecvBufferPython2or3(data)),mid=midcalc(NetworkRecvBufferPython2or3(data)))
+					Body = SMBNegoKerbAns(Dialect=Parse_Nego_Dialect(NetworkRecvBufferPython2or3(data)))
+					Body.calculate()
+			
+					packet1 = str(Header)+str(Body)
+					Buffer = StructPython2or3('>i', str(packet1))+str(packet1)
 
-						try:
-							self.request.send(NetworkSendBufferPython2or3(Buffer))
-							data = self.request.recv(1024)
-							if settings.Config.Verbose:
-								print(color("[+] SMB2: Sent SMBv1 negotiate response, received %d bytes" % len(data), 3))
-						except Exception as e:
-							if settings.Config.Verbose:
-								print(color("[!] SMB2: Error sending SMBv1 negotiate response: %s" % str(e), 1))
-							break
-					else:
+					try:
+						self.request.send(NetworkSendBufferPython2or3(Buffer))
+						data = self.request.recv(1024)
 						if settings.Config.Verbose:
-							print(color("[+] SMB2: Packet contains SMB 2.x, skipping SMBv1 handling", 3))
+							print(color("[+] SMB2: Sent SMBv1 negotiate response, received %d bytes" % len(data), 3))
+					except Exception as e:
+						if settings.Config.Verbose:
+							print(color("[!] SMB2: Error sending SMBv1 negotiate response: %s" % str(e), 1))
+						break
 
 				elif data[8:10] == b"\x73\x00" and data[4:5] == b"\xff":  # Session Setup AndX Request smbv1
 					if settings.Config.Verbose:
