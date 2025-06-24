@@ -389,6 +389,10 @@ class ResponderSMBServer(SimpleSMBServer):
 		SimpleSMBServer.__init__(self, listenAddress, listenPort, configFile)
 		self.setSMB2Support(True)
 		
+		# Set Responder's challenge instead of impacket's default
+		if settings.Config.NumChal != "random":
+			self.setSMBChallenge(settings.Config.Challenge.hex())
+		
 		# Set up authentication callback
 		def auth_callback(smbServer, connData, domain_name, user_name, host_name):
 			# Get client IP from connection data
@@ -401,7 +405,7 @@ class ResponderSMBServer(SimpleSMBServer):
 			if lmhash and nthash:
 				# Parse and save the hash
 				if len(nthash) == 24:  # NTLMv1
-					WriteHash = '%s::%s:%s:%s:%s' % (user_name, domain_name, lmhash.hex().upper(), nthash.hex().upper(), RandomChallenge().hex())
+					WriteHash = '%s::%s:%s:%s:%s' % (user_name, domain_name, lmhash.hex().upper(), nthash.hex().upper(), settings.Config.Challenge.hex().upper())
 					SaveToDb({
 						'module': 'SMB', 
 						'type': 'NTLMv1-SSP', 
@@ -411,7 +415,7 @@ class ResponderSMBServer(SimpleSMBServer):
 						'fullhash': WriteHash,
 					})
 				else:  # NTLMv2
-					WriteHash = '%s::%s:%s:%s:%s' % (user_name, domain_name, RandomChallenge().hex(), nthash[:32].hex().upper(), nthash[32:].hex().upper())
+					WriteHash = '%s::%s:%s:%s:%s' % (user_name, domain_name, settings.Config.Challenge.hex().upper(), nthash[:32].hex().upper(), nthash[32:].hex().upper())
 					SaveToDb({
 						'module': 'SMB', 
 						'type': 'NTLMv2-SSP', 
