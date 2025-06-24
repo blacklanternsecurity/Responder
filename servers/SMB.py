@@ -386,9 +386,12 @@ class SMB2(SMB1):  # SMB2 Server class extending SMB1 with enhanced SMBv2 suppor
 			print(color("[!] Impacket not found. Please install Impacket to use SMBv2 support."))
 			print(color("[!] You can install it with: pip install impacket"))
 			sys.exit(1)
-		super(SMB2, self).__init__(request, client_address, server)
+		
+		# Set attributes before calling parent constructor
 		self.connection_state = "INIT"
-		self.client_ip = client_address[0]
+		self.client_ip = client_address[0] if client_address else "unknown"
+		
+		super(SMB2, self).__init__(request, client_address, server)
 
 	def handle(self):
 		try:
@@ -506,18 +509,21 @@ class SMB2(SMB1):  # SMB2 Server class extending SMB1 with enhanced SMBv2 suppor
 		except Exception as e:
 			if settings.Config.Verbose:
 				print(color("[!] SMB2 Error: %s" % str(e), 1))
-				print(color("[!] SMB2 Connection state: %s" % self.connection_state, 1))
+				print(color("[!] SMB2 Connection state: %s" % getattr(self, 'connection_state', 'UNKNOWN'), 1))
 				import traceback
 				traceback.print_exc()
 			else:
 				print(color("[!] SMB2 Error: %s" % str(e), 1))
 		finally:
 			if settings.Config.Verbose:
-				print(color("[+] SMB2: Connection ended for %s" % self.client_ip, 3))
+				print(color("[+] SMB2: Connection ended for %s" % getattr(self, 'client_ip', 'unknown'), 3))
 
 	def handle_smbv1(self, data, Challenge):
 		"""Handle SMBv1 traffic for compatibility"""
 		try:
+			# Get client IP safely
+			client_ip = getattr(self, 'client_ip', 'unknown')
+			
 			# Negotiate Protocol Response smbv1
 			if data[8:10] == b'\x72\x00' and data[4:5] == b'\xff' and re.search(rb'SMB 2.\?\?\?', data) == None:
 				if settings.Config.Verbose:
@@ -646,7 +652,7 @@ class SMB2(SMB1):  # SMB2 Server class extending SMB1 with enhanced SMBv2 suppor
 		except Exception as e:
 			if settings.Config.Verbose:
 				print(color("[!] SMB2 SMBv1 fallback error: %s" % str(e), 1))
-				print(color("[!] SMB2 Connection state: %s" % self.connection_state, 1))
+				print(color("[!] SMB2 Connection state: %s" % getattr(self, 'connection_state', 'UNKNOWN'), 1))
 				import traceback
 				traceback.print_exc()
 			else:
