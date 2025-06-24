@@ -459,6 +459,26 @@ class SMB2(SMB1):  # SMB2 Server class extending SMB1 with enhanced SMBv2 suppor
 							print(color("[!] SMB2: Error in SMBv2 negotiate: %s" % str(e), 1))
 						break
 
+				# Handle SMBv1 packets that contain SMBv2 dialects as SMBv2 (server requires SMBv2)
+				elif data[8:10] == b"\x72\x00" and data[4:5] == b"\xff" and re.search(rb"SMB 2\.", data):
+					if settings.Config.Verbose:
+						print(color("[+] SMB2: Handling SMBv1 packet with SMBv2 dialects as SMBv2", 2))
+					self.connection_state = "SMBV2_NEGOTIATE_FROM_V1"
+					head = SMB2Header(CreditCharge="\x00\x00",Credits="\x01\x00")
+					t = SMB2NegoAns()
+					t.calculate()
+					packet1 = str(head)+str(t)
+					buffer1 = StructPython2or3('>i', str(packet1))+str(packet1)
+					try:
+						self.request.send(NetworkSendBufferPython2or3(buffer1))
+						data = self.request.recv(1024)
+						if settings.Config.Verbose:
+							print(color("[+] SMB2: Sent SMBv2 negotiate response to SMBv1 client, received %d bytes" % len(data), 3))
+					except Exception as e:
+						if settings.Config.Verbose:
+							print(color("[!] SMB2: Error in SMBv2 negotiate from SMBv1: %s" % str(e), 1))
+						break
+
 				elif data[16:18] == b"\x00\x00" and data[4:5] == b"\xfe":
 					if settings.Config.Verbose:
 						print(color("[+] SMB2: Handling SMBv2 negotiate response", 2))
