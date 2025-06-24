@@ -230,6 +230,13 @@ class SMB1(BaseRequestHandler):  # SMB1 & SMB2 Server class, NTLMSSP
 					data = self.request.recv(1024)
 
 				if data[16:18] == b"\x00\x00" and data[4:5] == b"\xfe":
+					if settings.Config.Verbose:
+						print(color("[+] SMB2: Debug - Checking condition: data[16:18] == b\"\\x00\\x00\" and data[4:5] == b\"\\xfe\"", 3))
+						print(color("[+] SMB2: Debug - data[16:18]: %s" % repr(data[16:18]), 3))
+						print(color("[+] SMB2: Debug - data[4:5]: %s" % repr(data[4:5]), 3))
+					if settings.Config.Verbose:
+						print(color("[+] SMB2: Handling SMBv2 session setup", 2))
+					self.connection_state = "SMBV2_SESSION_SETUP"
 					head = SMB2Header(MessageId=GrabMessageID(data).decode('latin-1'), PID="\xff\xfe\x00\x00", CreditCharge=GrabCreditCharged(data).decode('latin-1'), Credits=GrabCreditRequested(data).decode('latin-1'))
 					t = SMB2NegoAns(Dialect="\x10\x02")
 					t.calculate()
@@ -239,6 +246,13 @@ class SMB1(BaseRequestHandler):  # SMB1 & SMB2 Server class, NTLMSSP
 					data = self.request.recv(1024)
 
 				if data[16:18] == b"\x01\x00" and data[4:5] == b"\xfe":
+					if settings.Config.Verbose:
+						print(color("[+] SMB2: Debug - Checking condition: data[16:18] == b\"\\x01\\x00\" and data[4:5] == b\"\\xfe\"", 3))
+						print(color("[+] SMB2: Debug - data[16:18]: %s" % repr(data[16:18]), 3))
+						print(color("[+] SMB2: Debug - data[4:5]: %s" % repr(data[4:5]), 3))
+					if settings.Config.Verbose:
+						print(color("[+] SMB2: Handling SMBv2 session setup", 2))
+					self.connection_state = "SMBV2_SESSION_SETUP"
 					head = SMB2Header(Cmd="\x01\x00", MessageId=GrabMessageID(data).decode('latin-1'), PID="\xff\xfe\x00\x00", CreditCharge=GrabCreditCharged(data).decode('latin-1'), Credits=GrabCreditRequested(data).decode('latin-1'), SessionID=GrabSessionID(data).decode('latin-1'),NTStatus="\x16\x00\x00\xc0")
 					t = SMB2Session1Data(NTLMSSPNtServerChallenge=NetworkRecvBufferPython2or3(Challenge))
 					t.calculate()
@@ -498,32 +512,28 @@ class SMB2(SMB1):  # SMB2 Server class extending SMB1 with enhanced SMBv2 suppor
 							print(color("[!] SMB2: Error in SMBv2 negotiate from SMBv1: %s" % str(e), 1))
 						break
 
-				elif data[16:18] == b"\x00\x00" and data[4:5] == b"\xfe":
-					if settings.Config.Verbose:
-						print(color("[+] SMB2: Handling SMBv2 negotiate response", 2))
-					self.connection_state = "SMBV2_NEGOTIATE_RESPONSE"
-					head = SMB2Header(MessageId=GrabMessageID(data).decode('latin-1'), PID="\xff\xfe\x00\x00", CreditCharge=GrabCreditCharged(data).decode('latin-1'), Credits=GrabCreditRequested(data).decode('latin-1'))
-					# Use the same dialect as original SMB1 class
-					t = SMB2NegoAns(Dialect="\x10\x02")  # SMB 2.0.2
-					t.calculate()
-					packet1 = str(head)+str(t)
-					buffer1 = StructPython2or3('>i', str(packet1))+str(packet1)
-					try:
-						self.request.send(NetworkSendBufferPython2or3(buffer1))
-						data = self.request.recv(1024)
-						if settings.Config.Verbose:
-							print(color("[+] SMB2: Sent negotiate response, waiting for session setup", 3))
-					except Exception as e:
-						if settings.Config.Verbose:
-							print(color("[!] SMB2: Error in SMBv2 negotiate response: %s" % str(e), 1))
-						break
-
-				# Debug: Check if we should handle command 0x40
-				# if data[4:5] == b"\xfe" and settings.Config.Verbose:
-				# 	print(color("[+] SMB2: Debug - Checking command 0x40 condition", 3))
-				# 	print(color("[+] SMB2: Debug - Command bytes: %s" % repr(data[8:10]), 3))
-				# 	print(color("[+] SMB2: Debug - Expected: %s" % repr(b"\x40\x00"), 3))
-				# 	print(color("[+] SMB2: Debug - Match: %s" % (data[8:10] == b"\x40\x00"), 3))
+				# elif data[16:18] == b"\x00\x00" and data[4:5] == b"\xfe":
+				# 	if settings.Config.Verbose:
+				# 		print(color("[+] SMB2: Debug - Checking condition: data[16:18] == b\"\\x00\\x00\" and data[4:5] == b\"\\xfe\"", 3))
+				# 		print(color("[+] SMB2: Debug - data[16:18]: %s" % repr(data[16:18]), 3))
+				# 		print(color("[+] SMB2: Debug - data[4:5]: %s" % repr(data[4:5]), 3))
+				# 	if settings.Config.Verbose:
+				# 		print(color("[+] SMB2: Handling SMBv2 session setup", 2))
+				# 	self.connection_state = "SMBV2_SESSION_SETUP"
+				# 	head = SMB2Header(MessageId=GrabMessageID(data).decode('latin-1'), PID="\xff\xfe\x00\x00", CreditCharge=GrabCreditCharged(data).decode('latin-1'), Credits=GrabCreditRequested(data).decode('latin-1'))
+				# 	t = SMB2NegoAns(Dialect="\x10\x02")  # SMB 2.0.2
+				# 	t.calculate()
+				# 	packet1 = str(head)+str(t)
+				# 	buffer1 = StructPython2or3('>i', str(packet1))+str(packet1)
+				# 	try:
+				# 		self.request.send(NetworkSendBufferPython2or3(buffer1))
+				# 		data = self.request.recv(1024)
+				# 		if settings.Config.Verbose:
+				# 			print(color("[+] SMB2: Sent negotiate response, waiting for session setup", 3))
+				# 	except Exception as e:
+				# 		if settings.Config.Verbose:
+				# 			print(color("[!] SMB2: Error in SMBv2 negotiate response: %s" % str(e), 1))
+				# 		break
 
 				# Handle SMBv2 session setup command 0x40 (0x4000 in little-endian)
 				elif data[4:5] == b"\xfe" and data[8:10] == b"\x40\x00":
