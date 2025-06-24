@@ -519,16 +519,19 @@ class SMB2(SMB1):  # SMB2 Server class extending SMB1 with enhanced SMBv2 suppor
 						break
 
 				# Debug: Check if we should handle command 0x40
-				if data[4:5] == b"\xfe" and settings.Config.Verbose:
-					print(color("[+] SMB2: Debug - Checking command 0x40 condition", 3))
-					print(color("[+] SMB2: Debug - Command bytes: %s" % repr(data[8:10]), 3))
-					print(color("[+] SMB2: Debug - Expected: %s" % repr(b"\x40\x00"), 3))
-					print(color("[+] SMB2: Debug - Match: %s" % (data[8:10] == b"\x40\x00"), 3))
+				# if data[4:5] == b"\xfe" and settings.Config.Verbose:
+				# 	print(color("[+] SMB2: Debug - Checking command 0x40 condition", 3))
+				# 	print(color("[+] SMB2: Debug - Command bytes: %s" % repr(data[8:10]), 3))
+				# 	print(color("[+] SMB2: Debug - Expected: %s" % repr(b"\x40\x00"), 3))
+				# 	print(color("[+] SMB2: Debug - Match: %s" % (data[8:10] == b"\x40\x00"), 3))
 
 				# Handle SMBv2 session setup command 0x40 (0x4000 in little-endian)
 				elif data[4:5] == b"\xfe" and data[8:10] == b"\x40\x00":
 					if settings.Config.Verbose:
 						print(color("[+] SMB2: Handling SMBv2 session setup command 0x40", 2))
+						print(color("[+] SMB2: Debug - Command bytes: %s" % repr(data[8:10]), 3))
+						print(color("[+] SMB2: Debug - Expected: %s" % repr(b"\x40\x00"), 3))
+						print(color("[+] SMB2: Debug - Match: %s" % (data[8:10] == b"\x40\x00"), 3))
 					self.connection_state = "SMBV2_SESSION_SETUP_0x40"
 					
 					# Try to extract security buffer
