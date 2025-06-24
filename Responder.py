@@ -45,6 +45,7 @@ parser.add_option('-Q','--quiet',           action="store_true", help="Tell Resp
 
 parser.add_option('--lm',                  action="store_true", help="Force LM hashing downgrade for Windows XP/2003 and earlier. Default: False", dest="LM_On_Off", default=False)
 parser.add_option('--disable-ess',         action="store_true", help="Force ESS downgrade. Default: False", dest="NOESS_On_Off", default=False)
+parser.add_option('--smb2',                action="store_true", help="Enable SMBv2 support using impacket. Default: False", dest="SMB2_On_Off", default=False)
 parser.add_option('-v','--verbose',        action="store_true", help="Increase verbosity.", dest="Verbose")
 parser.add_option('-t','--ttl',            action="store",      help="Change the default Windows TTL for poisoned answers. Value in hex (30 seconds = 1e). use '-t random' for random TTL", dest="TTL", metavar="1e", default=None)
 parser.add_option('-N', '--AnswerName',	   action="store",      help="Specifies the canonical name returned by the LLMNR poisoner in tits Answer section. By default, the answer's canonical name is the same as the query. Changing this value is mainly useful when attempting to perform Kebreros relaying over HTTP.", dest="AnswerName", default=None)
@@ -354,7 +355,11 @@ def main():
 		        threads.append(Thread(target=serve_thread_tcp_auth, args=(settings.Config.Bind_To, 3128, Proxy_Auth,)))
 
 		if settings.Config.SMB_On_Off:
-			if settings.Config.LM_On_Off:
+			if settings.Config.SMB2_On_Off:
+				from servers.SMB import serve_smb2_server
+				threads.append(Thread(target=serve_smb2_server, args=(settings.Config.Bind_To, 445)))
+				threads.append(Thread(target=serve_smb2_server, args=(settings.Config.Bind_To, 139)))
+			elif settings.Config.LM_On_Off:
 				from servers.SMB import SMB1LM
 				threads.append(Thread(target=serve_thread_tcp, args=(settings.Config.Bind_To, 445, SMB1LM,)))
 				threads.append(Thread(target=serve_thread_tcp, args=(settings.Config.Bind_To, 139, SMB1LM,)))
