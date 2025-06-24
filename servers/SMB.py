@@ -528,7 +528,15 @@ class SMB2(SMB1):  # SMB2 Server class extending SMB1 with enhanced SMBv2 suppor
 				else:
 					if settings.Config.Verbose:
 						print(color("[+] SMB2: Falling back to SMBv1 handling", 3))
-					self.handle_smbv1(data, Challenge)
+					result_data = self.handle_smbv1(data, Challenge)
+					if result_data is None:
+						if settings.Config.Verbose:
+							print(color("[+] SMB2: SMBv1 handling completed, ending connection", 3))
+						break
+					else:
+						data = result_data
+						if settings.Config.Verbose:
+							print(color("[+] SMB2: SMBv1 handling returned %d bytes, continuing" % len(data), 3))
 
 		except Exception as e:
 			if settings.Config.Verbose:
@@ -563,10 +571,12 @@ class SMB2(SMB1):  # SMB2 Server class extending SMB1 with enhanced SMBv2 suppor
 				try:
 					self.request.send(NetworkSendBufferPython2or3(Buffer))
 					data = self.request.recv(1024)
+					if settings.Config.Verbose:
+						print(color("[+] SMB2: Sent SMBv1 negotiate response, received %d bytes" % len(data), 3))
 				except Exception as e:
 					if settings.Config.Verbose:
 						print(color("[!] SMB2: Error sending SMBv1 negotiate response: %s" % str(e), 1))
-					return
+					return None
 
 			if data[8:10] == b"\x73\x00" and data[4:5] == b"\xff":  # Session Setup AndX Request smbv1
 				if settings.Config.Verbose:
@@ -588,10 +598,12 @@ class SMB2(SMB1):  # SMB2 Server class extending SMB1 with enhanced SMBv2 suppor
 				try:
 					self.request.send(NetworkSendBufferPython2or3(Buffer))
 					data = self.request.recv(1024)
+					if settings.Config.Verbose:
+						print(color("[+] SMB2: Sent SMBv1 session setup challenge, received %d bytes" % len(data), 3))
 				except Exception as e:
 					if settings.Config.Verbose:
 						print(color("[!] SMB2: Error sending SMBv1 session setup response: %s" % str(e), 1))
-					return
+					return None
 
 				if data[8:10] == b"\x73\x00" and data[4:5] == b"\xff":  # STATUS_SUCCESS
 					if Is_Anonymous(data):
@@ -605,10 +617,12 @@ class SMB2(SMB1):  # SMB2 Server class extending SMB1 with enhanced SMBv2 suppor
 
 						try:
 							self.request.send(NetworkSendBufferPython2or3(Buffer))
+							if settings.Config.Verbose:
+								print(color("[+] SMB2: Sent anonymous response", 3))
 						except Exception as e:
 							if settings.Config.Verbose:
 								print(color("[!] SMB2: Error sending anonymous response: %s" % str(e), 1))
-							return
+							return None
 
 					else:
 						# Parse NTLMSSP_AUTH packet
@@ -629,11 +643,13 @@ class SMB2(SMB1):  # SMB2 Server class extending SMB1 with enhanced SMBv2 suppor
 							try:
 								self.request.send(NetworkSendBufferPython2or3(Buffer))
 								self.ntry += 1
-								return
+								if settings.Config.Verbose:
+									print(color("[+] SMB2: Sent ACCOUNT_DISABLED, continuing for more hashes", 3))
+								return data  # Continue the loop for more hashes
 							except Exception as e:
 								if settings.Config.Verbose:
 									print(color("[!] SMB2: Error sending ACCOUNT_DISABLED: %s" % str(e), 1))
-								return
+								return None
 
 						# Send STATUS_SUCCESS
 						if settings.Config.Verbose:
@@ -648,10 +664,12 @@ class SMB2(SMB1):  # SMB2 Server class extending SMB1 with enhanced SMBv2 suppor
 						try:
 							self.request.send(NetworkSendBufferPython2or3(Buffer))
 							data = self.request.recv(1024)
+							if settings.Config.Verbose:
+								print(color("[+] SMB2: Sent STATUS_SUCCESS, received %d bytes" % len(data), 3))
 						except Exception as e:
 							if settings.Config.Verbose:
 								print(color("[!] SMB2: Error sending STATUS_SUCCESS: %s" % str(e), 1))
-							return
+							return None
 
 			if data[8:10] == b"\x75\x00" and data[4:5] == b"\xff":  # Tree Connect AndX Request
 				if settings.Config.Verbose:
@@ -668,10 +686,15 @@ class SMB2(SMB1):  # SMB2 Server class extending SMB1 with enhanced SMBv2 suppor
 				try:
 					self.request.send(NetworkSendBufferPython2or3(Buffer))
 					data = self.request.recv(1024)
+					if settings.Config.Verbose:
+						print(color("[+] SMB2: Sent tree connect response, received %d bytes" % len(data), 3))
 				except Exception as e:
 					if settings.Config.Verbose:
 						print(color("[!] SMB2: Error sending tree connect response: %s" % str(e), 1))
-					return
+					return None
+
+			# Return the data to continue processing in the main loop
+			return data
 
 		except Exception as e:
 			if settings.Config.Verbose:
@@ -681,3 +704,4 @@ class SMB2(SMB1):  # SMB2 Server class extending SMB1 with enhanced SMBv2 suppor
 				traceback.print_exc()
 			else:
 				print(color("[!] SMB2 SMBv1 fallback error: %s" % str(e), 1))
+			return None
