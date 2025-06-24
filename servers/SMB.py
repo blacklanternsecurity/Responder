@@ -204,10 +204,12 @@ class SMB1(BaseRequestHandler):  # SMB1 & SMB2 Server class, NTLMSSP
 			self.ntry = 0
 			while True:
 				data = self.request.recv(1024)
-				self.request.settimeout(1)
+				self.request.settimeout(10)  # Increase timeout to 10 seconds
 				Challenge = RandomChallenge()
 
 				if not data:
+					if settings.Config.Verbose:
+						print(color("[+] SMB2: Connection closed by client %s" % self.client_address[0], 3))
 					break
 
 				if data[0:1] == b"\x81":  #session request 139
@@ -401,7 +403,7 @@ class SMB2(SMB1):  # SMB2 Server class extending SMB1 with enhanced SMBv2 suppor
 			self.ntry = 0
 			while True:
 				data = self.request.recv(1024)
-				self.request.settimeout(1)
+				self.request.settimeout(10)  # Increase timeout to 10 seconds
 				Challenge = RandomChallenge()
 
 				if not data:
@@ -438,7 +440,7 @@ class SMB2(SMB1):  # SMB2 Server class extending SMB1 with enhanced SMBv2 suppor
 						break
 
 				# Enhanced SMBv2 Negotiate Protocol Response
-				if data[8:10] == b"\x72\x00" and re.search(rb"SMB 2.\?\?\?", data):
+				if data[8:10] == b"\x72\x00" and re.search(rb"SMB 2.\?\?\?", data) and data[4:5] == b"\xfe":
 					if settings.Config.Verbose:
 						print(color("[+] SMB2: Handling SMBv2 negotiate request", 2))
 					self.connection_state = "SMBV2_NEGOTIATE"
